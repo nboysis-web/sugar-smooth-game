@@ -7,27 +7,23 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    :root { --card: rgba(255,255,255,0.7); }
-    body { font-family: 'Poppins', sans-serif; background:#fde1ea; touch-action:none; }
+    body { font-family:'Poppins',sans-serif; background:#fde1ea; touch-action:none; }
     #gameCanvas { cursor:none; background:white; border-radius:1.5rem; }
     .modal { transition: opacity .3s ease; }
     .floating-text {
       animation: floatUp 1s ease-out forwards;
-      position:absolute; font-weight:bold; font-size:1.25rem;
+      position:absolute; font-weight:bold; font-size:1.1rem;
       color:#ff8a00; text-shadow:1px 1px 2px rgba(0,0,0,.35);
       pointer-events:none;
     }
-    @keyframes floatUp {
-      from { opacity:1; transform:translateY(0); }
-      to   { opacity:0; transform:translateY(-50px); }
-    }
+    @keyframes floatUp { from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(-50px)} }
   </style>
 </head>
 <body class="flex flex-col items-center justify-start min-h-screen p-4 overflow-hidden">
 
   <div class="text-center mb-4 p-4 bg-white/50 rounded-xl shadow-md max-w-lg mx-auto">
     <h1 class="text-2xl font-bold text-pink-600">Sugar Smooth!</h1>
-    <p class="text-gray-700">Press and drag the sugar ball over a hair patch, then release quickly to rip it out. Faster rips = more points.</p>
+    <p class="text-gray-700">Press and drag to stick; release fast to rip. Chain rips for multipliers.</p>
   </div>
 
   <div id="game-container" class="relative w-full max-w-lg mx-auto">
@@ -50,8 +46,8 @@
     <!-- Floating score text + particles overlay -->
     <div id="floating-text-container" class="absolute inset-0 pointer-events-none"></div>
 
-    <!-- Combo meter -->
-    <div class="absolute left-4 right-4 bottom-4 z-10">
+    <!-- Combo meter (now non-interactive, never blocks clicks) -->
+    <div class="absolute left-4 right-4 bottom-4 z-10 pointer-events-none">
       <div class="w-full h-2 rounded-full bg-black/10 overflow-hidden">
         <div id="combo-fill" class="h-2 bg-pink-500 transition-[width] duration-150" style="width:0%"></div>
       </div>
@@ -59,7 +55,7 @@
     </div>
   </div>
 
-  <!-- High Score -->
+  <!-- High Score / Sound -->
   <div class="mt-4 bg-white/70 backdrop-blur-sm rounded-xl p-2 px-6 shadow-lg text-center">
     <span class="text-lg font-semibold text-gray-800">High Score:</span>
     <span id="high-score" class="text-xl font-bold text-pink-500">0</span>
@@ -70,7 +66,7 @@
   <div id="modal" class="modal fixed inset-0 bg-black/50 flex items-center justify-center z-20">
     <div class="bg-white rounded-2xl p-8 shadow-2xl text-center max-w-sm mx-auto transform transition-all scale-95 opacity-0">
       <h2 id="modal-title" class="text-3xl font-bold text-gray-800 mb-2">Welcome to Sugar Smooth!</h2>
-      <p id="modal-text" class="text-gray-600 mb-6">Press, drag to “stick,” and release fast to “rip.” Chain rips for big multipliers. Click “Time” or press <kbd>P</kbd> to pause.</p>
+      <p id="modal-text" class="text-gray-600 mb-6">Aim for hairs (they’ll glow). Hand closes when you grab. Click “Time” or press <kbd>P</kbd> to pause.</p>
       <button id="start-button" class="bg-pink-500 text-white font-bold py-3 px-8 rounded-full hover:bg-pink-600 transform hover:scale-105 transition-transform shadow-lg">Start Game</button>
     </div>
   </div>
@@ -94,129 +90,120 @@
   const soundBtn = document.getElementById('sound-btn');
 
   // ---------- State ----------
-  let score = 0;
-  let timer = 60;
+  let score = 0, timer = 60;
   let highScore = Number(localStorage.getItem('sugarSmoothHighScore') || 0);
-  let isGameRunning = false;
-  let isPaused = false;
-  let hairs = [];
-  let particles = [];
+  let isGameRunning = false, isPaused = false;
+  let hairs = [], particles = [];
   let mousePos = { x: -100, y: -100 };
+
   let isDragging = false;
   let dragStart = { x: 0, y: 0, time: 0 };
   let selectedHair = null;
+  let hoverHair = null;             // nearest hair under cursor for highlight
 
   // Combo / difficulty
-  let combo = 1;                 // 1..5
-  let lastRipTime = 0;
-  const comboDecayMsBase = 1500; // shrinks as difficulty rises
-  let allowedRipMs = 800;        // gets stricter as level increases
+  let combo = 1, lastRipTime = 0;
+  const comboDecayMsBase = 1500;
+  let allowedRipMs = 850;           // a touch more forgiving
   let level = 1;
 
-  // Audio (tiny WebAudio beeps)
+  // Audio
   let audioEnabled = (localStorage.getItem('sugarSmoothSound') || 'on') === 'on';
   let ac;
   function beep(freq = 440, dur = 0.08, type='sine', gain=0.04) {
     if (!audioEnabled) return;
     try {
       ac = ac || new (window.AudioContext || window.webkitAudioContext)();
-      const o = ac.createOscillator();
-      const g = ac.createGain();
-      o.type = type; o.frequency.value = freq;
-      g.gain.value = gain;
-      o.connect(g); g.connect(ac.destination);
-      o.start();
-      setTimeout(()=>{ o.stop(); }, dur*1000);
-    } catch { /* ignore */ }
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = freq; g.gain.value = gain;
+      o.connect(g); g.connect(ac.destination); o.start();
+      setTimeout(()=>o.stop(), dur*1000);
+    } catch {}
   }
   soundBtn.textContent = audioEnabled ? '🔊 Sound' : '🔈 Muted';
   soundBtn.onclick = () => {
     audioEnabled = !audioEnabled;
     localStorage.setItem('sugarSmoothSound', audioEnabled ? 'on' : 'off');
     soundBtn.textContent = audioEnabled ? '🔊 Sound' : '🔈 Muted';
-    if (audioEnabled) beep(660, .05, 'triangle', .05);
+    if (audioEnabled) beep(660,.05,'triangle',.05);
   };
 
   // ---------- Geometry / Visuals ----------
   const legOutlineColor = '#d9bda1';
-  function getLegPath(w, h) {
-    const p = new Path2D();
-    p.moveTo(w*0.75, h*0.1);
-    p.bezierCurveTo(w*0.95,h*0.4, w*0.8,h*0.7, w*0.65,h*0.95);
-    p.bezierCurveTo(w*0.6,h*1.0, w*0.4,h*1.0, w*0.35,h*0.95);
-    p.bezierCurveTo(w*0.2,h*0.7, w*0.25,h*0.3, w*0.45,h*0.1);
-    p.bezierCurveTo(w*0.55,0, w*0.65,0, w*0.75,h*0.1);
-    p.closePath();
-    return p;
+  function getLegPath(w,h){
+    const p=new Path2D();
+    p.moveTo(w*0.75,h*0.1);
+    p.bezierCurveTo(w*0.95,h*0.4,w*0.8,h*0.7,w*0.65,h*0.95);
+    p.bezierCurveTo(w*0.6,h*1.0,w*0.4,h*1.0,w*0.35,h*0.95);
+    p.bezierCurveTo(w*0.2,h*0.7,w*0.25,h*0.3,w*0.45,h*0.1);
+    p.bezierCurveTo(w*0.55,0,w*0.65,0,w*0.75,h*0.1);
+    p.closePath(); return p;
   }
   function isPointInLeg(x,y){ return ctx.isPointInPath(getLegPath(canvas.width,canvas.height), x, y); }
 
   function drawLeg() {
     ctx.save();
     const legPath = getLegPath(canvas.width, canvas.height);
-    // base gradient
-    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    g.addColorStop(0, '#ffe6d6');
-    g.addColorStop(1, '#f6d3bf');
-    ctx.fillStyle = g;
-    ctx.strokeStyle = legOutlineColor;
-    ctx.lineWidth = 6;
-    ctx.fill(legPath);
-    ctx.stroke(legPath);
+    const g = ctx.createLinearGradient(0,0,0,canvas.height);
+    g.addColorStop(0,'#ffe6d6'); g.addColorStop(1,'#f6d3bf');
+    ctx.fillStyle = g; ctx.strokeStyle = legOutlineColor; ctx.lineWidth = 6;
+    ctx.fill(legPath); ctx.stroke(legPath);
 
-    // inner shadow
     ctx.clip(legPath);
-    ctx.globalAlpha = 0.25;
-    ctx.shadowColor = 'rgba(0,0,0,0.25)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetY = 8;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // highlight
-    ctx.globalAlpha = 0.18;
-    const hg = ctx.createRadialGradient(canvas.width*0.45, canvas.height*0.18, 5,
-                                        canvas.width*0.45, canvas.height*0.18, canvas.width*0.5);
-    hg.addColorStop(0, 'white'); hg.addColorStop(1, 'transparent');
-    ctx.fillStyle = hg;
+    ctx.globalAlpha = .25; ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=20; ctx.shadowOffsetY=8;
     ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.globalAlpha = .18;
+    const hg = ctx.createRadialGradient(canvas.width*.45, canvas.height*.18, 5, canvas.width*.45, canvas.height*.18, canvas.width*.5);
+    hg.addColorStop(0,'white'); hg.addColorStop(1,'transparent');
+    ctx.fillStyle=hg; ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.restore();
   }
 
   function drawHairs() {
-    ctx.save();
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 1.5;
+    ctx.save(); ctx.strokeStyle='#222'; ctx.lineWidth=1.5;
     for (const h of hairs) {
       if (h.removed) continue;
-      const k = 0.35;
-      const ex = h.x + Math.cos(h.angle) * h.length;
-      const ey = h.y + Math.sin(h.angle) * h.length;
-      const cx = h.x + Math.cos(h.angle - Math.PI/2) * (h.length * k);
-      const cy = h.y + Math.sin(h.angle - Math.PI/2) * (h.length * k);
-
-      ctx.beginPath();
-      ctx.moveTo(h.x, h.y);
-      ctx.quadraticCurveTo(cx, cy, ex, ey);
-      ctx.stroke();
+      const k=.35, ex=h.x+Math.cos(h.angle)*h.length, ey=h.y+Math.sin(h.angle)*h.length;
+      const cx=h.x+Math.cos(h.angle-Math.PI/2)*(h.length*k), cy=h.y+Math.sin(h.angle-Math.PI/2)*(h.length*k);
+      ctx.beginPath(); ctx.moveTo(h.x,h.y); ctx.quadraticCurveTo(cx,cy,ex,ey); ctx.stroke();
+    }
+    // target ring
+    if (hoverHair && !hoverHair.removed) {
+      ctx.beginPath(); ctx.arc(hoverHair.x, hoverHair.y, 14, 0, Math.PI*2);
+      ctx.strokeStyle='rgba(255,160,0,0.8)'; ctx.lineWidth=2; ctx.stroke();
     }
     ctx.restore();
   }
 
-  function drawCursor() {
+  // --- Hand + sugar cursor ---
+  function drawHandCursor(open=true) {
+    const x=mousePos.x, y=mousePos.y;
     ctx.save();
-    // glow
-    ctx.beginPath();
-    ctx.arc(mousePos.x, mousePos.y, 22, 0, Math.PI*2);
-    ctx.fillStyle = isDragging ? 'rgba(255, 200, 100, 0.5)' : 'rgba(255, 223, 186, 0.4)';
-    ctx.fill();
-    // core
-    const grad = ctx.createRadialGradient(mousePos.x, mousePos.y, 5, mousePos.x, mousePos.y, 20);
-    if (isDragging) { grad.addColorStop(0, '#d4af37'); grad.addColorStop(1, '#b8860b'); }
-    else { grad.addColorStop(0, '#f8d568'); grad.addColorStop(1, '#d4af37'); }
-    ctx.beginPath(); ctx.arc(mousePos.x, mousePos.y, 20, 0, Math.PI*2); ctx.fillStyle = grad; ctx.fill();
-    // highlight
-    ctx.beginPath(); ctx.arc(mousePos.x-5, mousePos.y-5, 8, 0, Math.PI*2);
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fill();
+    // sugar blob (when closed/grabbing)
+    if (!open) {
+      ctx.beginPath();
+      ctx.arc(x+2, y+2, 12, 0, Math.PI*2);
+      const sg = ctx.createRadialGradient(x+0, y+0, 2, x, y, 12);
+      sg.addColorStop(0,'#fff0a6'); sg.addColorStop(1,'#d4af37');
+      ctx.fillStyle=sg; ctx.fill();
+      ctx.globalAlpha=.3; ctx.beginPath(); ctx.arc(x-5,y-5,5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+      ctx.globalAlpha=1;
+    }
+
+    // simple cartoon hand (palm + fingers)
+    ctx.fillStyle = '#ffd9b3'; ctx.strokeStyle='#d3a98a'; ctx.lineWidth=1.5;
+    // palm
+    ctx.beginPath(); ctx.ellipse(x, y, 14, 12, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    // thumb
+    ctx.beginPath(); ctx.ellipse(x-10, y+3, 6, 5, -0.3, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    // fingers (open vs closed)
+    const ang = open ? -0.35 : -1.2;
+    for (let i=0;i<3;i++){
+      const fx = x+8, fy = y-8 + i*6;
+      ctx.save(); ctx.translate(fx,fy); ctx.rotate(ang + i*0.15);
+      ctx.beginPath(); ctx.ellipse(0,0,8,4,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -224,17 +211,16 @@
   function generateHairs(count) {
     hairs = [];
     let attempts = 0;
-    while (hairs.length < count && attempts < count*15) {
+    while (hairs.length < count && attempts < count*20) {
       const x = Math.random()*canvas.width;
       const y = Math.random()*canvas.height;
       const angle = Math.random()*Math.PI*2;
       const length = 12 + Math.random()*12;
       const size = 16;
-      if (isPointInLeg(x, y) && isPointInLeg(x+size, y) && isPointInLeg(x, y+size)) {
-        let overlaps = false;
-        for (const h of hairs) {
-          if (Math.hypot(h.x-x, h.y-y) < size*1.8) { overlaps = true; break; }
-        }
+      // only require root point to be inside leg (allows edge hairs)
+      if (isPointInLeg(x, y)) {
+        let overlaps=false;
+        for (const h of hairs) { if (Math.hypot(h.x-x,h.y-y) < size*1.6) { overlaps=true; break; } }
         if (!overlaps) hairs.push({ x, y, angle, length, removed:false, size });
       }
       attempts++;
@@ -248,22 +234,16 @@
       particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.35, r: 2+Math.random()*2 });
     }
   }
-
   function updateParticles(dt) {
-    const g = 0; // no gravity
     particles = particles.filter(p=>{
-      p.life -= dt;
-      p.x += p.vx*dt; p.y += p.vy*dt; p.vy += g*dt;
-      return p.life > 0;
+      p.life -= dt; p.x += p.vx*dt; p.y += p.vy*dt; return p.life>0;
     });
   }
-
   function drawParticles() {
     ctx.save();
     for (const p of particles){
       ctx.globalAlpha = Math.max(0, p.life/0.35);
-      ctx.fillStyle = '#ffd166';
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
   }
@@ -272,107 +252,79 @@
   function updateComboUI() {
     comboLabel.textContent = `x${combo}`;
     comboLabel.style.opacity = combo>1 ? '1' : '0';
-    const pct = ((combo-1)/4)*100; // x1..x5
-    comboFill.style.width = pct + '%';
+    comboFill.style.width = ((combo-1)/4)*100 + '%';
   }
 
   // ---------- Game Loop ----------
   let lastFrame = performance.now();
   function update(dt) {
     if (!isGameRunning || isPaused) return;
+    // hover target selection
+    hoverHair = pickHairNear(mousePos, 26); // slightly larger to help edges
     // combo decay
     const decayMs = Math.max(900, comboDecayMsBase - level*60);
-    if (combo>1 && performance.now() - lastRipTime > decayMs) {
-      combo = 1; updateComboUI();
-    }
+    if (combo>1 && performance.now() - lastRipTime > decayMs) { combo = 1; updateComboUI(); }
     updateParticles(dt);
   }
-
   function draw() {
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    drawLeg();
-    drawHairs();
-    drawParticles();
-    drawCursor();
+    drawLeg(); drawHairs(); drawParticles();
+    drawHandCursor(!isDragging);  // open if not dragging
   }
-
   function gameLoop() {
-    const now = performance.now();
-    const dt = Math.min(0.033, (now - lastFrame)/1000);
-    lastFrame = now;
-    update(dt);
-    draw();
-    requestAnimationFrame(gameLoop);
+    const now = performance.now(); const dt = Math.min(0.033, (now - lastFrame)/1000); lastFrame = now;
+    update(dt); draw(); requestAnimationFrame(gameLoop);
   }
 
   // ---------- Scoring / Flow ----------
   function showFloatingText(text, x, y) {
     const p = document.createElement('p');
-    p.textContent = text;
-    p.className = 'floating-text';
-    p.style.left = `${x}px`;
-    p.style.top = `${y}px`;
+    p.textContent = text; p.className='floating-text';
+    p.style.left = `${x}px`; p.style.top = `${y}px`;
     floatingTextContainer.appendChild(p);
     setTimeout(()=> floatingTextContainer.removeChild(p), 1000);
   }
-
   function startTimer() {
-    timer = 60;
-    timerEl.textContent = timer;
+    timer = 60; timerEl.textContent = timer;
     const id = setInterval(()=>{
       if (!isGameRunning) { clearInterval(id); return; }
       if (!isPaused) {
-        timer--;
-        timerEl.textContent = Math.max(0,timer);
+        timer--; timerEl.textContent = Math.max(0,timer);
         if (timer<=0) { clearInterval(id); endGame(); }
       }
     }, 1000);
   }
-
   function startGame() {
-    score = 0; level = 1; allowedRipMs = 800; combo = 1; updateComboUI();
-    scoreEl.textContent = score;
-    isGameRunning = true; isPaused = false; pauseBadge.classList.add('hidden');
-    generateHairs(25);
-    hideModal();
-    startTimer();
-    beep(520, .06, 'triangle', .05);
+    score=0; level=1; allowedRipMs=850; combo=1; updateComboUI();
+    scoreEl.textContent=score; isGameRunning=true; isPaused=false; pauseBadge.classList.add('hidden');
+    generateHairs(25); hideModal(); startTimer(); beep(520,.06,'triangle',.05);
   }
-
   function endGame() {
-    isGameRunning = false;
-    if (score > highScore) {
-      highScore = score; localStorage.setItem('sugarSmoothHighScore', highScore);
-      highScoreEl.textContent = highScore;
-      modalTitle.textContent = "New High Score!";
-      modalText.innerHTML = `You scored <strong class="text-pink-500 text-xl">${score}</strong>!`;
+    isGameRunning=false;
+    if (score>highScore){ highScore=score; localStorage.setItem('sugarSmoothHighScore',highScore);
+      highScoreEl.textContent=highScore; modalTitle.textContent="New High Score!";
+      modalText.innerHTML=`You scored <strong class="text-pink-500 text-xl">${score}</strong>!`;
       beep(740,.08,'sawtooth',.05); setTimeout(()=>beep(880,.1,'sawtooth',.05),90);
     } else {
-      modalTitle.textContent = "Time's Up!";
-      modalText.innerHTML = `Score: <strong class="text-pink-500 text-xl">${score}</strong>. High score: ${highScore}.`;
+      modalTitle.textContent="Time's Up!";
+      modalText.innerHTML=`Score: <strong class="text-pink-500 text-xl">${score}</strong>. High score: ${highScore}.`;
       beep(300,.12,'sine',.05);
     }
-    startButton.textContent = "Play Again";
-    showModal();
+    startButton.textContent="Play Again"; showModal();
   }
-
   function levelUp() {
-    level++;
-    timer += 10; timerEl.textContent = timer;
-    score += 500; scoreEl.textContent = score;
+    level++; timer+=10; timerEl.textContent=timer;
+    score+=500; scoreEl.textContent=score;
     showFloatingText("LEVEL CLEAR! +500", canvas.width/2-60, canvas.height/2-10);
-    allowedRipMs = Math.max(500, allowedRipMs - 30); // harder
-    generateHairs(25 + Math.floor(score/1000));      // more hairs
+    allowedRipMs = Math.max(520, allowedRipMs - 30);
+    generateHairs(25 + Math.floor(score/1000));
     beep(660,.06,'triangle',.05); setTimeout(()=>beep(990,.08,'triangle',.05),70);
   }
 
   // ---------- Input (Pointer Events + capture) ----------
-  function getLocalPos(e) {
-    const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  }
+  function getLocalPos(e){ const r=canvas.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
 
-  function pickHairNear(pos, radius = 22) {
+  function pickHairNear(pos, radius=24) {
     let best=null, bestD=Infinity;
     for (const h of hairs) {
       if (h.removed) continue;
@@ -386,48 +338,33 @@
     if (!isGameRunning || isPaused) return;
     canvas.setPointerCapture(e.pointerId);
     const pos = getLocalPos(e);
-    selectedHair = pickHairNear(pos);
+    selectedHair = pickHairNear(pos, 26); // generous grab radius
     if (selectedHair) {
-      isDragging = true;
-      dragStart = { x: pos.x, y: pos.y, time: performance.now() };
+      isDragging = true; dragStart = { x: pos.x, y: pos.y, time: performance.now() };
       beep(440,.04,'sine',.035);
     }
   }
-  function onPointerMove(e) {
-    mousePos = getLocalPos(e);
-  }
+  function onPointerMove(e) { mousePos = getLocalPos(e); }
   function onPointerUp(e) {
     if (!isGameRunning || !isDragging || !selectedHair) return;
-    const pos = getLocalPos(e);
-    const t = performance.now();
+    const pos = getLocalPos(e); const t = performance.now();
     const distance = Math.hypot(pos.x - dragStart.x, pos.y - dragStart.y);
-    const timeDiff = t - dragStart.time;
-    const speed = distance / Math.max(1, timeDiff);
+    const timeDiff = t - dragStart.time; const speed = distance / Math.max(1, timeDiff);
 
     if (distance > 18 && timeDiff < allowedRipMs) {
-      // success
-      selectedHair.removed = true;
-      lastRipTime = performance.now();
+      selectedHair.removed = true; lastRipTime = performance.now();
       combo = Math.min(5, combo + 1); updateComboUI();
-
-      let base = 50;
-      let bonus = Math.min(150, Math.floor(speed * 140));
-      let points = Math.floor((base + bonus) * combo);
+      let base = 50, bonus = Math.min(150, Math.floor(speed*140));
+      const points = Math.floor((base + bonus) * combo);
       score += points; scoreEl.textContent = score;
-
       showFloatingText(`+${points} (x${combo})`, selectedHair.x, selectedHair.y);
       spawnParticles(selectedHair.x, selectedHair.y, 10+Math.floor(2*combo));
       beep(700 + combo*60, .06, 'triangle', .06);
-    } else {
-      // miss resets combo
-      combo = 1; updateComboUI();
-      beep(260,.05,'sine',.03);
-    }
+    } else { combo = 1; updateComboUI(); beep(260,.05,'sine',.03); }
 
     if (hairs.every(h => h.removed)) levelUp();
 
-    isDragging = false;
-    selectedHair = null;
+    isDragging=false; selectedHair=null;
     try { canvas.releasePointerCapture(e.pointerId); } catch {}
   }
 
@@ -438,67 +375,46 @@
       modal.classList.remove('opacity-0');
       const card = modal.querySelector('div');
       card.classList.remove('scale-95','opacity-0');
-      // ensure clicks don’t leak through
-      modal.style.pointerEvents = 'auto';
+      modal.style.pointerEvents='auto';
     },10);
   }
   function hideModal() {
     const card = modal.querySelector('div');
-    card.classList.add('scale-95','opacity-0');
-    modal.classList.add('opacity-0');
-    modal.style.pointerEvents = 'none';
+    card.classList.add('scale-95','opacity-0'); modal.classList.add('opacity-0'); modal.style.pointerEvents='none';
     setTimeout(()=> modal.classList.add('hidden'), 300);
   }
-
-  function togglePause() {
-    if (!isGameRunning) return;
-    isPaused = !isPaused;
-    pauseBadge.classList.toggle('hidden', !isPaused);
-    if (isPaused) beep(360,.05,'sine',.04); else beep(520,.05,'sine',.04);
-  }
+  function togglePause(){ if(!isGameRunning)return; isPaused=!isPaused; pauseBadge.classList.toggle('hidden', !isPaused); if(isPaused)beep(360,.05,'sine',.04); else beep(520,.05,'sine',.04); }
 
   // ---------- DPI scaling & resize ----------
   function scaleForDPR() {
     const dpr = Math.max(1, window.devicePixelRatio||1);
-    const cssW = canvas.clientWidth;
-    const cssH = canvas.clientHeight;
-    canvas.width = Math.floor(cssW * dpr);
-    canvas.height = Math.floor(cssH * dpr);
-    ctx.setTransform(dpr,0,0,dpr,0,0); // draw in CSS pixels
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    canvas.width = Math.floor(cssW * dpr); canvas.height = Math.floor(cssH * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
   }
-
   function resizeCanvas() {
     const container = document.getElementById('game-container');
     const size = Math.min(container.clientWidth, window.innerHeight*0.7);
-    canvas.style.width = size + 'px';
-    canvas.style.height = size + 'px';
-    floatingTextContainer.style.width = size + 'px';
-    floatingTextContainer.style.height = size + 'px';
-    scaleForDPR();
-    draw();
+    canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+    floatingTextContainer.style.width = size + 'px'; floatingTextContainer.style.height = size + 'px';
+    scaleForDPR(); draw();
   }
 
   // ---------- Init ----------
   function init() {
     highScoreEl.textContent = highScore;
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
+    window.addEventListener('resize', resizeCanvas); resizeCanvas();
     startButton.addEventListener('click', startGame);
     timeBox.addEventListener('click', togglePause);
-    window.addEventListener('keydown', (e)=>{ if (e.key.toLowerCase()==='p') togglePause(); });
-
+    window.addEventListener('keydown', (e)=>{ if(e.key.toLowerCase()==='p') togglePause(); });
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointerleave', ()=>{ mousePos = {x:-100,y:-100}; });
-
-    showModal();
-    lastFrame = performance.now();
-    requestAnimationFrame(gameLoop);
+    showModal(); lastFrame = performance.now(); requestAnimationFrame(gameLoop);
   }
-
   init();
   </script>
 </body>
 </html>
+
